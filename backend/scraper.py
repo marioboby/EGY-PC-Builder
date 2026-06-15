@@ -15,7 +15,6 @@ class BaseScraper(ABC):
     Each scraper manages its own browser lifecycle.
     """
 
-    # Subclasses must define these
     SOURCE_NAME: str = ""
     CATEGORIES:  dict[str, str] = {}
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import redis.asyncio as redis
 from scraper import BaseScraper
+import asyncio
+
 
 # ── Connection ─────────────────────────────────────────────────────────────────
 
@@ -144,6 +146,9 @@ async def warm_cache(scrapers: list[BaseScraper]) -> None:
     from scraper import merge_results
 
     print("\n── Warming cache ──")
+    loop = asyncio.get_running_loop()
+    print(f"  [cache] event loop={type(loop).__name__}, policy={type(asyncio.get_event_loop_policy()).__name__}")
+    print(f"  [cache] subprocess_exec attribute present={hasattr(loop, 'subprocess_exec')}")
     all_scraper_results = []
 
     async with async_playwright() as p:
@@ -188,3 +193,32 @@ async def get_cache_status() -> dict:
         }
 
     return status
+
+async def main():
+    # Load your already-scraped gpu.json to test with real data
+    with open("gpu.json", encoding="utf-8") as f:
+        gpu_products = json.load(f)
+
+    # 1. Store in Redis
+    await set_prices("gpu", gpu_products, source="all")
+
+    # 2. Retrieve and verify count matches
+    cached = await get_prices("gpu", source="all")
+    print(f"Stored: {len(gpu_products)} | Retrieved: {len(cached)}")
+    assert len(cached) == len(gpu_products), "Count mismatch!"
+
+    # 3. Check TTL is set correctly (~6 hours)
+    ttl = await get_ttl("gpu", source="all")
+    print(f"TTL: {ttl // 3600}h {(ttl % 3600) // 60}m remaining")
+    assert ttl > 0, "TTL not set!"
+
+    # 4. Verify cache status overview
+    status = await get_cache_status()
+    print("\nCache status:")
+    for key, info in status.items():
+        print(f"  {key}: {info['products']} products, expires in {info['ttl_human']}")
+
+    print("\n✓ All checks passed")
+
+if __name__ == "__main__":
+    asyncio.run(main())
