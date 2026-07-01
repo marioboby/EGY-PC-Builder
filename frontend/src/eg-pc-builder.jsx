@@ -1,55 +1,5 @@
 import { useState, useRef, useEffect } from "react";
 
-const SYSTEM_PROMPT = `You are an expert PC builder specializing in the Egyptian market. You have deep knowledge of current component prices in Egypt (in EGP), availability at major Egyptian stores (like El-Araby, B.Tech, 2B, Sigma, and independent shops in Computer City/Arcade), and which brands/models offer the best value locally.
-
-When given a budget and requirements, you will recommend a complete PC build tailored to Egypt's market. Always return your response as a valid JSON object with this exact structure:
-
-{
-  "summary": "Brief 1-2 sentence overview of the build and its strengths",
-  "feasibility": "feasible" | "tight" | "infeasible",
-  "feasibility_note": "Explanation of feasibility given budget and goals",
-  "total_estimated": number (total EGP),
-  "parts": [
-    {
-      "category": "CPU" | "Motherboard" | "RAM" | "GPU" | "Storage" | "PSU" | "Case" | "Cooler",
-      "name": "Full product name",
-      "price_egp": number,
-      "notes": "Why this was chosen, value proposition, any caveats",
-      "egprices_search": "Short search term to use on egprices.com"
-    }
-  ],
-  "alternatives": [
-    { "part": "category name", "alternative": "alternative product name", "reason": "why swap" }
-  ],
-  "tips": ["tip1", "tip2", "tip3"],
-  "upgrade_path": "What to upgrade first when budget allows"
-}
-
-Egyptian market pricing guidelines (as of 2025):
-- Budget builds: 15,000–25,000 EGP
-- Mid-range: 25,000–50,000 EGP  
-- High-end: 50,000–100,000+ EGP
-- Intel Core i3-13100F: ~8,000–10,000 EGP
-- Intel Core i5-13400F: ~12,000–15,000 EGP
-- Intel Core i7-13700F: ~22,000–27,000 EGP
-- AMD Ryzen 5 5600X: ~11,000–14,000 EGP
-- AMD Ryzen 5 7600X: ~17,000–22,000 EGP
-- RTX 3060 12GB: ~22,000–27,000 EGP
-- RTX 4060: ~27,000–33,000 EGP
-- RTX 4070: ~45,000–55,000 EGP
-- RX 6650 XT: ~20,000–25,000 EGP
-- RX 7600: ~23,000–28,000 EGP
-- 16GB DDR4 (2x8): ~5,000–7,000 EGP
-- 32GB DDR4 (2x16): ~9,000–13,000 EGP
-- 1TB NVMe SSD: ~4,000–6,000 EGP
-- B660M motherboard: ~5,000–8,000 EGP
-- 650W 80+ Bronze PSU: ~4,000–6,000 EGP
-- Mid-tower case: ~3,000–6,000 EGP
-
-Use these as reference points but adjust based on the specific build context. Always be honest if a budget is insufficient for the desired use case.
-
-IMPORTANT: Return ONLY the JSON object, no markdown, no preamble, no explanation outside the JSON.`;
-
 const USE_CASES = [
   { id: "gaming-1080p", label: "Gaming 1080p", icon: "🎮" },
   { id: "gaming-1440p", label: "Gaming 1440p", icon: "🖥️" },
@@ -128,9 +78,14 @@ function PartCard({ part, index }) {
       </div>
       {expanded && (
         <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+          {part.store && (
+            <p style={{ color: "#06d6a0", fontSize: "12px", marginBottom: "4px", fontWeight: "bold" }}>
+              Store: {part.store}
+            </p>
+          )}
           <p style={{ color: "#aaa", fontSize: "13px", marginBottom: "8px", lineHeight: 1.6 }}>{part.notes}</p>
           <a
-            href={`https://egprices.com/en/search/?q=${encodeURIComponent(part.egprices_search)}`}
+            href={`https://egprices.com/en/search/?q=${encodeURIComponent(part.egprices_search || part.name)}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
@@ -196,22 +151,14 @@ export default function PCBuilder() {
   const [activeTab, setActiveTab] = useState("parts");
   const resultRef = useRef(null);
 
+  // You can change this if your FastAPI server runs on a different port/host
+  const API_URL = "http://localhost:8000/build";
+
   useEffect(() => {
     if (result && resultRef.current) {
       resultRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [result]);
-
-  const buildPrompt = () => {
-    const useCaseLabel = USE_CASES.find((u) => u.id === useCase)?.label || useCase;
-    const priorityLabel = PRIORITY_OPTIONS.find((p) => p.id === priority)?.label || priority;
-    return `Build me a PC for: ${useCaseLabel}
-Budget: ${budget} EGP
-Priority: ${priorityLabel}
-${extras ? `Additional requirements: ${extras}` : ""}
-
-Please recommend the best possible build for this budget in the Egyptian market.`;
-  };
 
   const handleBuild = async () => {
     if (!budget || !useCase) return;
@@ -220,40 +167,28 @@ Please recommend the best possible build for this budget in the Egyptian market.
     setError(null);
 
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": "claude-ai-artifact",
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-5",
-          max_tokens: 4096,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: buildPrompt() }],
+          budget: parseInt(budget, 10),
+          use_case: useCase,
+          priority: priority,
+          notes: extras || "",
         }),
       });
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData?.error?.message || `HTTP ${response.status}`);
+        throw new Error(errData?.detail || `HTTP ${response.status} - Server Error`);
       }
 
-      const data = await response.json();
-      console.log("API response:", JSON.stringify(data).slice(0, 500));
-      const text = data.content?.map((b) => b.text || "").join("") || "";
-      // Robustly find the JSON object in the response
-      const first = text.indexOf("{");
-      const last = text.lastIndexOf("}");
-      if (first === -1 || last === -1 || last <= first) {
-        throw new Error("No valid JSON in response. Got: " + text.slice(0, 300));
-      }
-      const parsed = JSON.parse(text.slice(first, last + 1));
+      const parsed = await response.json();
       setResult(parsed);
     } catch (err) {
-      setError(`Error: ${err.message || "Failed to generate build. Please try again."}`);
+      setError(`Error: ${err.message || "Failed to generate build. Is the backend running?"}`);
     } finally {
       setLoading(false);
     }
@@ -297,7 +232,7 @@ Please recommend the best possible build for this budget in the Egyptian market.
         textAlign: "center",
       }}>
         <div style={{ fontSize: "11px", letterSpacing: "0.3em", color: "#e53935", textTransform: "uppercase", marginBottom: "10px", fontFamily: "'DM Mono', monospace" }}>
-          Egyptian Market · Powered by Claude AI
+          Egyptian Market · Powered by Live Market Data & AI
         </div>
         <h1 style={{
           fontFamily: "'Bebas Neue', sans-serif",
@@ -310,7 +245,7 @@ Please recommend the best possible build for this budget in the Egyptian market.
           EG PC BUILDER
         </h1>
         <p style={{ color: "#666", fontSize: "14px", maxWidth: "480px", margin: "0 auto" }}>
-          AI-powered builds based on Egyptian market prices · Compare results on EGPrices.com
+          AI-powered builds based on real-time prices · Compare results on EGPrices.com
         </p>
       </div>
 

@@ -16,8 +16,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import BuildRequest, BuildResponse
-from cache import warm_cache, get_cache_status, get_or_scrape
+from cache import clear_all_cache, delete_prices, warm_cache, get_cache_status, get_or_scrape
 from scraper import EGPricesScraper
+from builder import get_llm
+
 
 
 # ── Scrapers ───────────────────────────────────────────────────────────────────
@@ -26,23 +28,24 @@ SCRAPERS = [
     EGPricesScraper()
 ]
 
+LLM = get_llm()   # reads LLM_PROVIDER from .env
+
 # ── Startup / shutdown ─────────────────────────────────────────────────────────
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Warm the cache on startup, then hand off to the scheduler."""
-    print("Starting up — warming cache...")
-    await warm_cache(SCRAPERS)
-    # scheduler starts here in the next step
-    yield
-    print("Shutting down.")
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     """Warm the cache on startup, then hand off to the scheduler."""
+#     print("Starting up — warming cache...")
+#     await warm_cache(SCRAPERS)
+#     # scheduler starts here in the next step
+#     yield
+#     print("Shutting down.")
 
 # ── App ────────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="EG PC Builder API",
-    version="0.1.0",
-    lifespan=lifespan,
+    version="0.1.0"
 )
 
 app.add_middleware(
@@ -88,15 +91,27 @@ async def prices(category: str):
         raise HTTPException(status_code=404, detail=f"No products found for '{category}'")
     return {"category": category, "count": len(data), "items": data}
 
+@app.delete("/admin/clear-cache")
+async def clear_cache(category: str | None = None):
+    """
+    Clear cached prices from Redis.
+    If a category is provided, clear only that category's cache.
+    Otherwise, clear all caches.
+    Useful for testing or if the cache is corrupted.
+    """
+    if category:
+        await delete_prices(category, source="all")
+        return {"status": "done", "cleared_category": category}
+    await clear_all_cache()
+    return {"status": "done"}
 
 @app.post("/build", response_model=BuildResponse)
 async def build(req: BuildRequest):
     """
     Generate a PC build recommendation based on live cached prices.
     """
-    from builder import generate_build
     try:
-        result = await generate_build(
+        result = await LLM.generate_build(
             budget   = req.budget,
             use_case = req.use_case,
             priority = req.priority,

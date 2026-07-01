@@ -4,7 +4,7 @@ from playwright.async_api import async_playwright, Browser
 from bs4 import BeautifulSoup
 import asyncio
 import json
-
+from pathlib import Path
 
 # ── Base class ─────────────────────────────────────────────────────────────────
 
@@ -164,6 +164,7 @@ class EGPricesScraper(BaseScraper):
 
             if price_el:
                 raw = price_el.get_text(strip=True).replace(",", "")
+                print(f"  Found product: name={name} price={raw} store={store}")
                 price = int(raw) if raw.isdigit() else None
 
             if name and price:
@@ -174,7 +175,7 @@ class EGPricesScraper(BaseScraper):
                     "source":    self.SOURCE_NAME,
                 })
             else:
-                print(f"  ✗ Skipped — name={name} price={price}")
+                print(f"  ✗ Skipped — name={name} price={price} store={store}")
 
         return products
 
@@ -212,6 +213,7 @@ def save_results(results: dict[str, list[dict]]) -> None:
     """Overwrite JSON files with fresh data."""
     for category, products in results.items():
         filename = f"{category}.json"
+
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(products, f, ensure_ascii=False, indent=2)
         print(f"Saved {len(products)} products → {filename}")

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 import redis.asyncio as redis
-from scraper import BaseScraper
+from scraper import BaseScraper, EGPricesScraper
 import asyncio
 
 
@@ -76,6 +76,12 @@ async def delete_prices(category: str, source: str = "all") -> None:
     await r.delete(key)
     print(f"  [cache] DEL  {key}")
 
+async def clear_all_cache() -> None:
+    """Clear all cached prices from Redis."""
+    r = get_client()
+    keys = await r.keys("prices:*")
+    if keys:
+        await r.delete(*keys)
 
 async def get_ttl(category: str, source: str = "all") -> int:
     """Returns seconds remaining on the key, or -2 if it doesn't exist."""
@@ -146,9 +152,7 @@ async def warm_cache(scrapers: list[BaseScraper]) -> None:
     from scraper import merge_results
 
     print("\n── Warming cache ──")
-    loop = asyncio.get_running_loop()
-    print(f"  [cache] event loop={type(loop).__name__}, policy={type(asyncio.get_event_loop_policy()).__name__}")
-    print(f"  [cache] subprocess_exec attribute present={hasattr(loop, 'subprocess_exec')}")
+
     all_scraper_results = []
 
     async with async_playwright() as p:
@@ -195,30 +199,34 @@ async def get_cache_status() -> dict:
     return status
 
 async def main():
-    # Load your already-scraped gpu.json to test with real data
-    with open("gpu.json", encoding="utf-8") as f:
-        gpu_products = json.load(f)
+    # # Load your already-scraped gpu.json to test with real data
+    # with open("gpu.json", encoding="utf-8") as f:
+    #     gpu_products = json.load(f)
 
-    # 1. Store in Redis
-    await set_prices("gpu", gpu_products, source="all")
+    # # 1. Store in Redis
+    # await set_prices("gpu", gpu_products, source="all")
 
     # 2. Retrieve and verify count matches
-    cached = await get_prices("gpu", source="all")
-    print(f"Stored: {len(gpu_products)} | Retrieved: {len(cached)}")
-    assert len(cached) == len(gpu_products), "Count mismatch!"
+    for category in EGPricesScraper().CATEGORIES:
+        cached = await get_or_scrape(category, [EGPricesScraper()])
+        print(f"Cached {category} count (all): {len(cached) if cached else 0}")
+        cached_eg = await get_prices(category, source="EGPrices")
+        print(f"Cached {category} count (EGPrices): {len(cached_eg) if cached_eg else 0}")
 
-    # 3. Check TTL is set correctly (~6 hours)
-    ttl = await get_ttl("gpu", source="all")
-    print(f"TTL: {ttl // 3600}h {(ttl % 3600) // 60}m remaining")
-    assert ttl > 0, "TTL not set!"
 
-    # 4. Verify cache status overview
-    status = await get_cache_status()
-    print("\nCache status:")
-    for key, info in status.items():
-        print(f"  {key}: {info['products']} products, expires in {info['ttl_human']}")
+    # # 3. Check TTL is set correctly (~6 hours)
+    # ttl = await get_ttl("gpu", source="all")
+    # print(f"TTL: {ttl // 3600}h {(ttl % 3600) // 60}m remaining")
+    # assert ttl > 0, "TTL not set!"
 
-    print("\n✓ All checks passed")
+    # # 4. Verify cache status overview
+    # status = await get_cache_status()
+    # print("\nCache status:")
+    # for key, info in status.items():
+    #     print(f"  {key}: {info['products']} products, expires in {info['ttl_human']}")
+
+    # print("\n✓ All checks passed")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
