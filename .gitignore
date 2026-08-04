@@ -1,1 +1,4 @@
 /eg-pc-builder-guide.docx
+.env
+node_modules/
+tests/
