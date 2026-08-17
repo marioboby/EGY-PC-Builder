@@ -52,7 +52,7 @@ eg-pc-builder/
 ## Prerequisites
 
 - Python 3.11+
-- Docker (for Redis) — or a local Redis install
+- Redis — via **WSL2** on Windows (see setup below), or a native/Docker install on macOS/Linux
 - An Anthropic, OpenAI, or Gemini API key — or [Ollama](https://ollama.com) for local models
 
 ---
@@ -74,10 +74,25 @@ playwright install chromium     # installs the headless browser
 
 ### 2. Start Redis
 
+**Windows (via WSL2):**
+
+```bash
+# Inside your WSL2 distro (one-time install)
+sudo apt update && sudo apt install redis-server
+
+# Start it (each session, or enable it to run on boot)
+sudo service redis-server start
+
+# Verify — run from WSL or from Windows if the port is forwarded
+redis-cli ping   # → PONG
+```
+
+Redis listens on `localhost:6379` inside WSL2, which is reachable from Windows as `localhost:6379` too (WSL2 forwards ports to the Windows host automatically), so `REDIS_URL=redis://localhost:6379/0` works unchanged from either side.
+
+**macOS / Linux (Docker alternative):**
+
 ```bash
 docker run -d --name redis-eg -p 6379:6379 redis:7-alpine
-
-# Verify
 docker exec redis-eg redis-cli ping   # → PONG
 ```
 
@@ -103,11 +118,16 @@ REDIS_URL=redis://localhost:6379/0
 
 ```bash
 # Windows
-python run.py
+python run.py                          # wraps uvicorn with reload=True, loop="none" — see note below
+
+# Windows, equivalent without run.py
+uvicorn main:app --reload --loop=none
 
 # macOS / Linux
 uvicorn main:app --reload
 ```
+
+> **Why `--loop=none` on Windows:** by default, uvicorn uses `ProactorEventLoop` on Windows in single-process mode, but swaps to `SelectorEventLoop` as soon as `--reload` (or multiple workers) is used. `SelectorEventLoop` can't spawn subprocesses on Windows, which breaks Playwright (`NotImplementedError`) — including during the cache-warming step in `lifespan` on startup. Setting `loop="none"` tells uvicorn to skip its own event-loop setup entirely, so the Windows default (Proactor) is left alone even with `--reload` on. This isn't needed on macOS/Linux, and won't be needed at all once this is running in Docker — Linux containers don't have this Proactor/Selector split in the first place.
 
 The server starts at `http://localhost:8000`. On first startup it scrapes all categories and warms the cache — this takes a few minutes.
 
@@ -122,6 +142,7 @@ The server starts at `http://localhost:8000`. On first startup it scrapes all ca
 | `GET` | `/prices/{category}` | Get cached prices for a category |
 | `GET` | `/admin/cache-status` | TTL and product count per cache key |
 | `POST` | `/admin/scrape` | Force a full re-scrape |
+| `DELETE` | `/admin/clear-cache` | Clear all cached prices, or one category via `?category=` |
 
 Interactive docs available at **`http://localhost:8000/docs`** (Swagger UI).
 
@@ -269,4 +290,3 @@ Results from all scrapers are automatically merged and deduplicated.
 ## License
 
 MIT
-
