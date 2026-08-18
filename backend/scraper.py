@@ -4,7 +4,6 @@ from playwright.async_api import async_playwright, Browser
 from bs4 import BeautifulSoup
 import asyncio
 import json
-from pathlib import Path
 
 # ── Base class ─────────────────────────────────────────────────────────────────
 

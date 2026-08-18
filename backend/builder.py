@@ -1,13 +1,18 @@
-# builder.py
 from __future__ import annotations
 from abc import ABC, abstractmethod
 import json
 import os
+import time
+import logging
 
 from google import genai
 from google.genai import types
 from cache import get_or_scrape
 from scraper import BaseScraper
+
+from models import BuildResponse
+
+logger = logging.getLogger("uvicorn")
 
 CATEGORIES = ["gpu", "processor", "motherboard", "memory", "storage", "psu", "case", "cooler"]
 PRODUCTS_PER_CATEGORY = 20
@@ -105,11 +110,22 @@ class BaseLLM(ABC):
         notes:    str,
         scrapers: list[BaseScraper],
     ) -> dict:
+        t0 = time.perf_counter()
         price_block = await build_price_block(scrapers)
-        system      = build_system_prompt(price_block)
-        user_msg    = build_user_message(budget, use_case, priority, notes)
-        text        = await self._complete(system, user_msg)
-        return parse_response(text)
+        t1 = time.perf_counter()
+        logger.info(f"[timing] price_block: {t1 - t0:.2f}s")
+
+        system   = build_system_prompt(price_block)
+        user_msg = build_user_message(budget, use_case, priority, notes)
+
+        t2 = time.perf_counter()
+        text = await self._complete(system, user_msg)
+        t3 = time.perf_counter()
+        logger.info(f"[timing] llm_complete: {t3 - t2:.2f}s")
+
+        result = parse_response(text)
+        logger.info(f"[timing] total: {time.perf_counter() - t0:.2f}s")
+        return result
 
     @abstractmethod
     async def _complete(self, system: str, user_msg: str) -> str:
@@ -148,7 +164,7 @@ class GPT(BaseLLM):
     def __init__(self, model: str = MODEL_NAME):
         from openai import AsyncOpenAI
         self.model  = model
-        self.client = AsyncOpenAI()  # reads OPENAI_API_KEY
+        self.client = AsyncOpenAI(api_key=os.getenv("GPT_API_KEY"))
 
     async def _complete(self, system: str, user_msg: str) -> str:
         response = await self.client.chat.completions.create(
@@ -169,23 +185,21 @@ class GeminiLLM(BaseLLM):
 
     def __init__(self, model: str = MODEL_NAME):
         self.model_name = model
-        
-        # 1. The new SDK relies on a Client instance rather than a global genai.configure()
-        # Note: genai.Client() automatically looks for the GEMINI_API_KEY environment 
-        # variable, but passing it explicitly here works perfectly too.
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+    def __del__(self):
+        self.client.close()
+
     async def _complete(self, system: str, user_msg: str) -> str:
-        # 2. Native async support is accessed via `self.client.aio`
-        # 3. System instructions are now passed via types.GenerateContentConfig
-        response = await self.client.aio.models.generate_content(
+        chat = self.client.aio.chats.create(
             model=self.model_name,
-            contents=user_msg,
             config=types.GenerateContentConfig(
-                system_instruction=system
-            )
+                system_instruction=system,
+                response_mime_type="application/json",
+            response_schema=BuildResponse,
+            ),
         )
-        
+        response = await chat.send_message(user_msg)
         return response.text
 
 

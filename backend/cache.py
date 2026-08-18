@@ -4,7 +4,7 @@ import json
 import redis.asyncio as redis
 from scraper import BaseScraper, EGPricesScraper
 import asyncio
-
+import logging
 
 # ── Connection ─────────────────────────────────────────────────────────────────
 
@@ -14,6 +14,8 @@ _pool = redis.ConnectionPool.from_url(
     "redis://localhost:6379/0",
     decode_responses=True  # return str instead of bytes
 )
+
+logger = logging.getLogger(__name__)
 
 def get_client() -> redis.Redis:
     return redis.Redis(connection_pool=_pool)
@@ -148,31 +150,15 @@ async def warm_cache(scrapers: list[BaseScraper]) -> None:
     Scrape all categories from all scrapers and populate Redis.
     Called on app startup and by the scheduler every 6 hours.
     """
-    from playwright.async_api import async_playwright
-    from scraper import merge_results
+    logger.info("\n── Warming cache ──")
 
-    print("\n── Warming cache ──")
+    # Get the unique set of categories across all scrapers
+    categories = set()
+    for scraper in scrapers:
+        categories.update(scraper.CATEGORIES)
 
-    all_scraper_results = []
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        for scraper in scrapers:
-            results = {}
-            for key in scraper.CATEGORIES:
-                try:
-                    results[key] = await scraper.scrape_category(browser, key)
-                    await set_prices(key, results[key], source=scraper.SOURCE_NAME)
-                except Exception as e:
-                    print(f"  [cache] {scraper.SOURCE_NAME}/{key} failed: {e}")
-                    results[key] = []
-            all_scraper_results.append(results)
-        await browser.close()
-
-    merged = merge_results(all_scraper_results)
-    for category, products in merged.items():
-        await set_prices(category, products, source="all")
-        print(f"  ✓ Cached {len(products)} products → prices:all:{category}")
+    for category in sorted(categories):
+        await get_or_scrape(category, scrapers, force=True)
 
     print("── Cache warm complete ──\n")
 
@@ -199,34 +185,11 @@ async def get_cache_status() -> dict:
     return status
 
 async def main():
-    # # Load your already-scraped gpu.json to test with real data
-    # with open("gpu.json", encoding="utf-8") as f:
-    #     gpu_products = json.load(f)
 
-    # # 1. Store in Redis
-    # await set_prices("gpu", gpu_products, source="all")
-
-    # 2. Retrieve and verify count matches
-    for category in EGPricesScraper().CATEGORIES:
-        cached = await get_or_scrape(category, [EGPricesScraper()])
-        print(f"Cached {category} count (all): {len(cached) if cached else 0}")
-        cached_eg = await get_prices(category, source="EGPrices")
-        print(f"Cached {category} count (EGPrices): {len(cached_eg) if cached_eg else 0}")
-
-
-    # # 3. Check TTL is set correctly (~6 hours)
-    # ttl = await get_ttl("gpu", source="all")
-    # print(f"TTL: {ttl // 3600}h {(ttl % 3600) // 60}m remaining")
-    # assert ttl > 0, "TTL not set!"
-
-    # # 4. Verify cache status overview
-    # status = await get_cache_status()
-    # print("\nCache status:")
-    # for key, info in status.items():
-    #     print(f"  {key}: {info['products']} products, expires in {info['ttl_human']}")
-
-    # print("\n✓ All checks passed")
-
-
+    scrapers = [EGPricesScraper()]
+    # await warm_cache(scrapers)
+    cache = await get_cache_status()
+    print(json.dumps(cache, indent=2, ensure_ascii=False))
+    
 if __name__ == "__main__":
     asyncio.run(main())

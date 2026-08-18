@@ -1,9 +1,8 @@
 # ── Web framework ──────────────────────────────────────────────
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
+fastapi[standard]==0.115.5
 
 # ── Scraping ───────────────────────────────────────────────────
-playwright==1.49.0
+playwright==1.62.0
 beautifulsoup4==4.12.3
 
 # ── Cache ──────────────────────────────────────────────────────
@@ -12,12 +11,14 @@ redis==5.2.1
 # ── AI providers ───────────────────────────────────────────────
 anthropic==0.40.0          # Claude (required)
 openai==1.57.0             # GPT + Ollama (OpenAI-compatible)
-google-generativeai==0.8.3 # Gemini (optional)
+google-genai==2.18.1       # Gemini — unified SDK (`from google import genai`)
+                            # NOTE: replaces the old `google-generativeai` package,
+                            # which builder.py no longer imports
 
 # ── Config ─────────────────────────────────────────────────────
-pydantic==2.10.3
-pydantic-settings==2.6.1
+pydantic==2.13.4            # bumped from 2.10.3 — google-genai 2.18.1 requires >=2.12.5
+pydantic-settings==2.15.0   # bumped to match
 python-dotenv==1.0.1
 
 # ── Scheduler ──────────────────────────────────────────────────
-apscheduler==3.10.4
+apscheduler==3.10.4        # imported in requirements but not yet wired into main.py
