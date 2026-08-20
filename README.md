@@ -35,16 +35,23 @@ React Frontend  ◄──  FastAPI /build  ◄──  LLM (Claude / GPT / Gemini
 ## Project Structure
 
 ```
-eg-pc-builder/
-├── main.py           # FastAPI app, routes, lifespan
-├── scraper.py        # BaseScraper + EGPricesScraper implementation
-├── cache.py          # Redis get/set/warm helpers
-├── builder.py        # BaseLLM + provider implementations + factory
-├── models.py         # Pydantic request/response schemas
-├── run.py            # Entry point (Windows event loop fix)
-├── requirements.txt
-├── .env.example
-└── README.md
+eg_pc_builder/
+├── main.py              # app + lifespan only (~55 lines)
+├── config.py             # SCRAPERS list (single source of truth)
+├── models.py              # unchanged
+├── scheduler.py            # AsyncIOScheduler + scheduled_scrape_job
+├── services/
+│   ├── cache.py            # unchanged logic, import path fixed
+│   └── scraper.py            # unchanged
+├── llm/
+│   ├── base.py              # BaseLLM
+│   ├── providers.py          # ClaudeLLM, GPT, GeminiLLM, OllamaLLM, get_llm
+│   ├── prompt.py              # build_price_block, system prompt, parse_response
+│   └── fallback.py             # generate_build_with_fallback
+└── routers/
+    ├── build.py               # POST /build
+    ├── prices.py               # GET /prices/{category}
+    └── admin.py                 # /admin/*
 ```
 
 ---
