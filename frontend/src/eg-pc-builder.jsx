@@ -417,7 +417,7 @@ export default function PCBuilder() {
               Generating Build...
             </>
           ) : (
-            <>⚡ Generate My Build</>
+            <>Generate My Build</>
           )}
         </button>
 

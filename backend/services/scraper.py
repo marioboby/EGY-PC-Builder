@@ -157,24 +157,36 @@ class EGPricesScraper(BaseScraper):
             price_el = card.select_one("span.text-rose-700 span")
             store_el = card.select_one("div.flex.flex-row img")
 
-            name  = name_el.get_text(strip=True) if name_el else None
-            store = store_el.get("alt")          if store_el else "N/A"
-            price = None
+            try:
+                name  = name_el.get_text(strip=True) if name_el else None
+                store = store_el.get("alt")          if store_el else "N/A"
+                price = None
 
-            if price_el:
-                raw = price_el.get_text(strip=True).replace(",", "")
-                print(f"  Found product: name={name} price={raw} store={store}")
-                price = int(raw) if raw.isdigit() else None
+                if price_el:
+                    raw = price_el.get_text(strip=True).replace(",", "")
+                    # print(f"  Found product: name={name} price={raw} store={store}")
+                    price = int(raw) if raw.isdigit() else None
 
-            if name and price:
-                products.append({
-                    "name":      name,
-                    "price_egp": price,
-                    "store":     store,
-                    "source":    self.SOURCE_NAME,
-                })
-            else:
-                print(f"  ✗ Skipped — name={name} price={price} store={store}")
+                else:
+                    print(f"  ✗ Failed to parse price: {price_el} - HTML: {card.prettify()[:200]}...")
+
+
+                if name and price:
+                    products.append({
+                        "name":      name,
+                        "price_egp": price,
+                        "store":     store,
+                        "source":    self.SOURCE_NAME,
+                    })
+
+                else:
+                    print(f"  ✗ Failed to parse name: {name} - HTML: {card.prettify()[:200]}...")
+
+            except Exception as e:
+                print(f"  ✗ Failed to parse card: {e} - HTML: {card.prettify()[:200]}...")
+                continue
+            # else:
+                # print(f"  ✗ Skipped — name={name} price={price} store={store}")
 
         return products
 

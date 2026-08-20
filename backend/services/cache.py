@@ -2,9 +2,10 @@
 from __future__ import annotations
 import json
 import redis.asyncio as redis
-from scraper import BaseScraper, EGPricesScraper
 import asyncio
 import logging
+from services.scraper import BaseScraper, EGPricesScraper, merge_results
+
 
 # ── Connection ─────────────────────────────────────────────────────────────────
 
@@ -120,7 +121,6 @@ async def get_or_scrape(
     print(f"  [cache] Scraping fresh data for '{category}'...")
 
     from playwright.async_api import async_playwright
-    from scraper import merge_results
 
     all_results = []
 
@@ -187,9 +187,9 @@ async def get_cache_status() -> dict:
 async def main():
 
     scrapers = [EGPricesScraper()]
-    # await warm_cache(scrapers)
-    cache = await get_cache_status()
-    print(json.dumps(cache, indent=2, ensure_ascii=False))
+    await warm_cache(scrapers)
+    # cache = await get_cache_status()
+    # print(json.dumps(cache, indent=2, ensure_ascii=False))
     
 if __name__ == "__main__":
     asyncio.run(main())

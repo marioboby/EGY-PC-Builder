@@ -2,3 +2,9 @@
 .env
 node_modules/
 tests/
+v2/
+.vscode/
+builder-env/
+
+*.pyc
+*.pyd
