@@ -24,11 +24,13 @@ React Frontend  ◄──  FastAPI /build  ◄──  LLM (Claude / GPT / Gemini
 
 - **Live prices** — scrapes 8 component categories (GPU, CPU, RAM, Motherboard, Storage, PSU, Case, Cooler) across all pages
 - **RAG pipeline** — real market data injected into LLM context, no hallucinated prices
-- **Multi-provider LLM** — swap between Claude, GPT, Gemini, or a local Ollama model via a single env var
+- **Multi-provider LLM with automatic fallback** — tries providers in order (e.g. Gemini → GPT → Claude → Ollama) and falls through to the next one on timeout, error, or malformed response, so a single provider outage doesn't fail the request
 - **Extensible scraper** — abstract base class makes adding new store scrapers (B.Tech, 2B, etc.) straightforward
 - **Redis caching** — fast responses, scraper isn't hammering the site on every request
 - **Compatibility checks** — LLM enforced to verify CPU socket, RAM type, and budget adherence
-- **Admin endpoints** — inspect cache status, trigger forced re-scrape
+- **Scheduled re-scraping** — APScheduler refreshes the cache automatically every 6 hours
+- **Admin endpoints** — inspect cache status, scheduler status, trigger forced re-scrape
+- **React frontend** — Vite + React client that talks to the FastAPI backend
 
 ---
 
@@ -36,15 +38,36 @@ React Frontend  ◄──  FastAPI /build  ◄──  LLM (Claude / GPT / Gemini
 
 ```
 eg-pc-builder/
-├── main.py           # FastAPI app, routes, lifespan
-├── scraper.py        # BaseScraper + EGPricesScraper implementation
-├── cache.py          # Redis get/set/warm helpers
-├── builder.py        # BaseLLM + provider implementations + factory
-├── models.py         # Pydantic request/response schemas
-├── run.py            # Entry point (Windows event loop fix)
+├── main.py              # FastAPI app instance, CORS, lifespan (LLM providers + scheduler)
+├── config.py             # SCRAPERS list — shared by routes, admin, and the scheduler
+├── scheduler.py            # APScheduler setup (6h re-scrape job)
+├── models.py                # Pydantic request/response schemas
+├── run.py                     # Entry point (Windows event loop fix)
 ├── requirements.txt
 ├── .env.example
-└── README.md
+├── README.md
+│
+├── routers/
+│   ├── build.py               # POST /build
+│   ├── prices.py               # GET /prices/{category}
+│   └── admin.py                  # /admin/* endpoints
+│
+├── services/
+│   ├── scraper.py               # BaseScraper + EGPricesScraper implementation
+│   └── cache.py                  # Redis get/set/warm helpers
+│
+├── llm/
+│   ├── base.py                  # BaseLLM abstract class
+│   ├── providers.py               # ClaudeLLM, GPT, GeminiLLM, OllamaLLM + get_llm() factory
+│   ├── prompt.py                    # Price block builder, system prompt, response parsing
+│   └── fallback.py                    # generate_build_with_fallback() — the provider chain
+│
+└── frontend/
+    ├── src/                      # React components, pages, API client
+    ├── index.html
+    ├── package.json
+    ├── vite.config.js
+    └── .env.example
 ```
 
 ---
@@ -52,12 +75,13 @@ eg-pc-builder/
 ## Prerequisites
 
 - Python 3.11+
+- Node.js 18+ and npm (for the frontend)
 - Redis — via **WSL2** on Windows (see setup below), or a native/Docker install on macOS/Linux
 - An Anthropic, OpenAI, or Gemini API key — or [Ollama](https://ollama.com) for local models
 
 ---
 
-## Setup
+## Setup — Backend
 
 ### 1. Clone and install dependencies
 
@@ -114,7 +138,9 @@ LLM_PROVIDER=claude                 # claude | gpt | gemini | ollama
 REDIS_URL=redis://localhost:6379/0
 ```
 
-### 4. Run
+> **Note:** `LLM_PROVIDER` controls the single-provider path (`get_llm()`). The `/build` route itself uses the fallback chain configured in `main.py`'s `lifespan()` (`app.state.llm_providers`), which currently tries providers in a fixed order regardless of this variable — update the provider list in `main.py` directly to change that order.
+
+### 4. Run the backend
 
 ```bash
 # Windows
@@ -133,14 +159,70 @@ The server starts at `http://localhost:8000`. On first startup it scrapes all ca
 
 ---
 
+## Setup — Frontend
+
+The frontend is a Vite + React app in `frontend/`, separate from the Python backend.
+
+### 1. Install dependencies
+
+```bash
+cd frontend
+npm install
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Point it at your running backend:
+
+```bash
+# frontend/.env
+VITE_API_BASE_URL=http://localhost:8000
+```
+
+### 3. Run the dev server
+
+```bash
+npm run dev
+```
+
+The frontend starts at `http://localhost:5173` (Vite's default) and proxies requests to the backend URL configured above. Make sure the backend (`/build` etc.) is already running, or builds will fail with a connection error.
+
+### 4. Build for production
+
+```bash
+npm run build      # outputs static files to frontend/dist
+npm run preview     # serve the production build locally to sanity-check it
+```
+
+> **CORS:** the backend currently allows all origins (`allow_origins=["*"]` in `main.py`) so the dev server works out of the box. Tighten this to your actual frontend URL before deploying either side.
+
+### Running both together
+
+Two terminals, from the repo root:
+
+```bash
+# Terminal 1 — backend
+python run.py
+
+# Terminal 2 — frontend
+cd frontend && npm run dev
+```
+
+---
+
 ## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/health` | Liveness check |
-| `POST` | `/build` | Generate a PC build |
+| `POST` | `/build` | Generate a PC build (tries providers in order, falls through on failure) |
 | `GET` | `/prices/{category}` | Get cached prices for a category |
 | `GET` | `/admin/cache-status` | TTL and product count per cache key |
+| `GET` | `/admin/scheduler-status` | Scheduler running state and next scheduled re-scrape |
 | `POST` | `/admin/scrape` | Force a full re-scrape |
 | `DELETE` | `/admin/clear-cache` | Clear all cached prices, or one category via `?category=` |
 
@@ -189,22 +271,33 @@ Valid `priority` values: `value`, `performance`, `future-proof`, `quiet`
 
 ## Switching LLM Providers
 
-Change `LLM_PROVIDER` in `.env` — no code changes needed:
+The single-provider path (`get_llm()` in `llm/providers.py`) reads `LLM_PROVIDER` from `.env` — no code changes needed for that path:
 
 ```bash
-LLM_PROVIDER=claude    # Anthropic Claude (default)
+LLM_PROVIDER=claude    # Anthropic Claude
 LLM_PROVIDER=gpt       # OpenAI GPT-4o
-LLM_PROVIDER=gemini    # Google Gemini
+LLM_PROVIDER=gemini    # Google Gemini (default in the fallback chain)
 LLM_PROVIDER=ollama    # Local model via Ollama (free, no API key)
+```
+
+The `/build` route uses `generate_build_with_fallback()` instead, with a fixed provider list set in `main.py`'s `lifespan()`. To change the fallback order or add/remove a provider, edit that list directly:
+
+```python
+# main.py
+app.state.llm_providers = [
+    GeminiLLM(),
+    GPT(),
+    # ClaudeLLM(),
+    # OllamaLLM(model="qwen2.5:3b-instruct"),
+]
 ```
 
 ### Using a specific model
 
-```bash
-# Override the default model for any provider
-LLM_MODEL=gpt-4-turbo
-LLM_MODEL=gemini-1.5-flash
-LLM_MODEL=mistral        # any model you've pulled with ollama pull
+```python
+# Override the default model for any provider by passing it in the constructor
+GeminiLLM(model="gemini-1.5-flash")
+OllamaLLM(model="mistral")   # any model you've pulled with ollama pull
 ```
 
 ### Running locally with Ollama
@@ -216,10 +309,9 @@ ollama serve             # starts on http://localhost:11434
 
 # Set in .env:
 LLM_PROVIDER=ollama
-LLM_MODEL=llama3
 ```
 
-> **Note:** Local models work but produce lower-quality compatibility reasoning than frontier models. Recommended for development only.
+> **Note:** Local models work but produce lower-quality compatibility reasoning than frontier models. Recommended for development, or as a last-resort fallback if cloud providers are unavailable.
 
 ---
 
@@ -240,7 +332,7 @@ LLM_MODEL=llama3
 
 ## Adding a New Store Scraper
 
-Subclass `BaseScraper` in `scraper.py` and implement three methods:
+Subclass `BaseScraper` in `services/scraper.py` and implement three methods:
 
 ```python
 class BTechScraper(BaseScraper):
@@ -261,9 +353,10 @@ class BTechScraper(BaseScraper):
         ...
 ```
 
-Then add it to `SCRAPERS` in `main.py`:
+Then add it to `SCRAPERS` in `config.py`:
 
 ```python
+# config.py
 SCRAPERS = [
     EGPricesScraper(),
     BTechScraper(),   # ← add here
@@ -276,14 +369,21 @@ Results from all scrapers are automatically merged and deduplicated.
 
 ## Environment Variables
 
+### Backend (`.env`)
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | If using Claude | — | Anthropic API key |
 | `OPENAI_API_KEY` | If using GPT | — | OpenAI API key |
 | `GEMINI_API_KEY` | If using Gemini | — | Google API key |
-| `LLM_PROVIDER` | No | `claude` | Active LLM provider |
-| `LLM_MODEL` | No | Provider default | Override the model name |
+| `LLM_PROVIDER` | No | `claude` | Provider for the single-provider `get_llm()` path |
 | `REDIS_URL` | No | `redis://localhost:6379/0` | Redis connection URL |
+
+### Frontend (`frontend/.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VITE_API_BASE_URL` | No | `http://localhost:8000` | Base URL the frontend calls for `/build`, `/prices`, etc. |
 
 ---
 
