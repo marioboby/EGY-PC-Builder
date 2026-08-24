@@ -1,9 +1,9 @@
 from __future__ import annotations
 from fastapi import APIRouter
 
-from config import SCRAPERS
+from core.config import SCRAPERS
 from services.cache import clear_all_cache, delete_prices, warm_cache, get_cache_status
-from scheduler import scheduler
+from core.scheduler import scheduler
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 

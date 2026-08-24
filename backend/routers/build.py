@@ -2,7 +2,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from models import BuildRequest, BuildResponse
-from config import SCRAPERS
+from core.config import SCRAPERS
 from llm import generate_build_with_fallback
 
 router = APIRouter(tags=["build"])

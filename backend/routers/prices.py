@@ -1,7 +1,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
-from config import SCRAPERS
+from core.config import SCRAPERS
 from services.cache import get_or_scrape
 
 router = APIRouter(tags=["prices"])

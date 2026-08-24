@@ -7,24 +7,21 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from llm import GeminiLLM, GPT
-from scheduler import start_scheduler, stop_scheduler
+from llm import get_fallback_chain
+from core.scheduler import start_scheduler, stop_scheduler
 from routers import build, prices, admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Instantiate LLM providers once, start the scheduler, clean up on shutdown."""
-    app.state.llm_providers = [
-        GeminiLLM(),
-        GPT(),
-    ]
+    app.state.llm_providers = get_fallback_chain()  # reads LLM_FALLBACK_ORDER from .env
 
-    # start_scheduler()
+    start_scheduler()
 
     yield
 
-    # stop_scheduler()
+    stop_scheduler()
 
     for p in app.state.llm_providers:
         if hasattr(p, "client") and hasattr(p.client, "close"):

@@ -3,7 +3,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from services.cache import warm_cache
-from config import SCRAPERS
+from core.config import SCRAPERS
 
 logger = logging.getLogger("uvicorn")
 
